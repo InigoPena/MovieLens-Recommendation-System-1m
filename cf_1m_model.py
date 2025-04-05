@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import pandas as pd
+import os
+import matplotlib.pyplot as plt
 
 class CollaborativeFilteringModel(nn.Module):
     def __init__(self, n_users, n_movies, n_factors=50, hidden_layers=[32,16]):
@@ -24,7 +26,7 @@ class CollaborativeFilteringModel(nn.Module):
         nn.init.xavier_uniform_(self.movie_embedding.weight)
 
         # Dropout layer in case of overfitting
-        self.dropout = nn.Dropout(p=0.05)
+        self.dropout = nn.Dropout(p=0.1)
 
         # Hidden layers
         layers = []
@@ -33,6 +35,7 @@ class CollaborativeFilteringModel(nn.Module):
         for hidden_size in hidden_layers:
             layers.extend([
                 nn.Linear(input_size, hidden_size),
+                nn.BatchNorm1d(hidden_size),
                 nn.ReLU(),
                 nn.Dropout(0.05)
             ])
@@ -60,20 +63,20 @@ class CollaborativeFilteringModel(nn.Module):
         return self.network(x)
 
 # Function to train the model  # High learning rate because scheduler will reduce it
-def train_model(model, train_loader, test_loader, epochs=7, learning_rate=0.01):
+def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    # # Learning Rate Scheduler
-    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer, 
-    #     mode='min', 
-    #     factor=0.75, 
-    #     patience=3, 
-    #     min_lr=1e-6
-    # )
+    train_losses = []
+    val_losses = []
+
+    best_val_loss = float('inf')
+    patience = 3
+    counter = 0
+    best_model_state = None
+
 
     # Training Loop
     for epoch in range(epochs):
@@ -90,21 +93,74 @@ def train_model(model, train_loader, test_loader, epochs=7, learning_rate=0.01):
             optimizer.step()
 
             total_train_loss += loss.item()
+
+        avg_train_loss = total_train_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
     
         # Validation Loop
         model.eval()
         total_val_loss = 0
         with torch.no_grad():
             model.eval()
-            for batch_users, batch_movies, batch_labels in test_loader:
+            for batch_users, batch_movies, batch_labels in val_loader:
                 outputs = model(batch_users, batch_movies)
                 val_loss = criterion(outputs, batch_labels)
                 total_val_loss += val_loss.item()
-        
-        #scheduler.step(total_val_loss)
+        avg_val_loss = total_val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
         
         # Print training and validation loss
         print(f'Epoch [{epoch+1}/{epochs}], '
               f'Train Loss: {total_train_loss/len(train_loader):.4f}, '
-              f'Validation Loss: {total_val_loss/len(test_loader):.4f}')
+              f'Validation Loss: {total_val_loss/len(val_loader):.4f}')
+        
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            best_model_state = model.state_dict()
+            counter = 0
+        else:
+            counter += 1
+            if counter >= patience:
+                print(f"Early stopping at epoch {epoch+1}")
+                break
+    # Save the best model
+    if best_model_state:
+        model.load_state_dict(best_model_state)
+        print("Best model loaded.")
 
+    # Plot and save the loss histogram
+    os.makedirs('results', exist_ok=True)
+    plt.figure()
+    plt.plot(range(1, epochs + 1), train_losses, label='Training Loss')
+    plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
+    plt.legend()
+    plt.savefig('results/loss_plot.png')
+    print("Loss plot saved to 'results/loss_plot.png'")
+
+def prepare_loader(file_path):
+    """
+    Prepare data for evaluation and trainig.
+    
+    Returns:
+        DataLoader: DataLoader for datasets.
+    """
+    # Load the test data
+    df_for_loader = pd.read_csv(file_path)
+
+    # Convert ratings from 1-5 to 0-4 for PyTorch compatibility
+    df_for_loader['Rating'] = df_for_loader['Rating'] - 1
+
+    # Convert DataFrame to PyTorch tensor
+    tensor = TensorDataset(
+        torch.tensor(df_for_loader['User'].values, dtype=torch.long),
+        torch.tensor(df_for_loader['Movie'].values, dtype=torch.long),
+        torch.tensor(df_for_loader['Rating'].values, dtype=torch.long)
+    )
+
+    # Create DataLoader
+    loader = DataLoader(tensor, batch_size=64, shuffle=False)
+
+    return loader
