@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+import pandas as pd
 
 class CollaborativeFilteringModel(nn.Module):
     def __init__(self, n_users, n_movies, n_factors=50, hidden_layers=[32,16]):
@@ -22,10 +23,6 @@ class CollaborativeFilteringModel(nn.Module):
         nn.init.xavier_uniform_(self.user_embedding.weight)
         nn.init.xavier_uniform_(self.movie_embedding.weight)
 
-        # # Scale the weights
-        # self.user_embedding.weight.data *= 1e-6
-        # self.movie_embedding.weight.data *= 1e-6
-
         # Dropout layer in case of overfitting
         self.dropout = nn.Dropout(p=0.05)
 
@@ -43,41 +40,40 @@ class CollaborativeFilteringModel(nn.Module):
 
         # Final output layer with softmax (for multiclass clasification) activation
         layers.append(nn.Linear(input_size, 5))
-        layers.append(nn.Softmax(dim=1))
+        #layers.append(nn.Softmax(dim=1))
 
         # Create the sequential model
         self.network = nn.Sequential(*layers)
 
+        print(f"Model initialized with {n_users} users and {n_movies} movies.\n")
+
     # Define how data flows through the model
     def forward(self, users, movies):
         
-        # Embed users and movies
         user_embed = self.user_embedding(users)
         movie_embed = self.movie_embedding(movies)
         
         # Concatenate embeddings
         x = torch.cat([user_embed, movie_embed], dim=1)
         
-        # Pass through dropout and network
         x = self.dropout(x)
         return self.network(x)
 
-# Function to train the model
-def train_model(model, train_loader, test_loader, epochs=10, learning_rate=0.001):
+# Function to train the model  # High learning rate because scheduler will reduce it
+def train_model(model, train_loader, test_loader, epochs=7, learning_rate=0.01):
     
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    # Learning Rate Scheduler (similar to Keras ReduceLROnPlateau)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 
-        mode='min', 
-        factor=0.75, 
-        patience=3, 
-        min_lr=1e-6, 
-        verbose=True
-    )
+    # # Learning Rate Scheduler
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, 
+    #     mode='min', 
+    #     factor=0.75, 
+    #     patience=3, 
+    #     min_lr=1e-6
+    # )
 
     # Training Loop
     for epoch in range(epochs):
@@ -104,3 +100,11 @@ def train_model(model, train_loader, test_loader, epochs=10, learning_rate=0.001
                 outputs = model(batch_users, batch_movies)
                 val_loss = criterion(outputs, batch_labels)
                 total_val_loss += val_loss.item()
+        
+        #scheduler.step(total_val_loss)
+        
+        # Print training and validation loss
+        print(f'Epoch [{epoch+1}/{epochs}], '
+              f'Train Loss: {total_train_loss/len(train_loader):.4f}, '
+              f'Validation Loss: {total_val_loss/len(test_loader):.4f}')
+
