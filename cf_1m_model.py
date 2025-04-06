@@ -43,7 +43,6 @@ class CollaborativeFilteringModel(nn.Module):
 
         # Final output layer with softmax (for multiclass clasification) activation
         layers.append(nn.Linear(input_size, 5))
-        #layers.append(nn.Softmax(dim=1))
 
         # Create the sequential model
         self.network = nn.Sequential(*layers)
@@ -62,7 +61,7 @@ class CollaborativeFilteringModel(nn.Module):
         x = self.dropout(x)
         return self.network(x)
 
-# Function to train the model  # High learning rate because scheduler will reduce it
+# Model Training function
 def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     
     # Loss and Optimizer
@@ -111,8 +110,8 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
         
         # Print training and validation loss
         print(f'Epoch [{epoch+1}/{epochs}], '
-              f'Train Loss: {total_train_loss/len(train_loader):.4f}, '
-              f'Validation Loss: {total_val_loss/len(val_loader):.4f}')
+              f'Train Loss: {avg_train_loss:.4f}, '
+              f'Validation Loss: {avg_val_loss:.4f}')
         
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -123,6 +122,7 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
             if counter >= patience:
                 print(f"Early stopping at epoch {epoch+1}")
                 break
+
     # Save the best model
     if best_model_state:
         model.load_state_dict(best_model_state)
@@ -141,12 +141,7 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     print("Loss plot saved to 'results/loss_plot.png'")
 
 def prepare_loader(file_path):
-    """
-    Prepare data for evaluation and trainig.
     
-    Returns:
-        DataLoader: DataLoader for datasets.
-    """
     # Load the test data
     df_for_loader = pd.read_csv(file_path)
 
