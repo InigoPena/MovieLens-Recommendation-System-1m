@@ -8,6 +8,7 @@ from seaborn import heatmap
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay, classification_report
 from cf_1m_model import CollaborativeFilteringModel, prepare_loader
+from cf_1m_regression_model import CollaborativeFilteringRegression, prepare_loader_for_regression
 import pandas as pd
 
 def evaluate_model(model, data_loader):
@@ -35,6 +36,39 @@ def evaluate_model(model, data_loader):
     conf_matrix = confusion_matrix(all_labels, all_preds)
 
     return accuracy, conf_matrix, classification_rep
+
+def evaluate_regression_model(model, test_loader):
+    model.eval()
+    all_predictions = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for batch_users, batch_movies, batch_ratings in test_loader:
+            outputs = model(batch_users, batch_movies).squeeze()
+            
+            # Scale outputs from 0-1 to 0-4 range
+            scaled_outputs = outputs * 4
+            
+            # Convert back to 1-5 range for reporting
+            final_predictions = scaled_outputs + 1
+            actual_ratings = batch_ratings + 1
+            
+            all_predictions.extend(final_predictions.tolist())
+            all_targets.extend(actual_ratings.tolist())
+    
+    predictions = torch.tensor(all_predictions)
+    targets = torch.tensor(all_targets)
+    
+    # Calculate mse
+    mse = ((predictions - targets) ** 2).mean().item()
+    
+    # Calculate rmse
+    rmse = torch.sqrt(torch.tensor(mse)).item()
+    
+    # Calculate mae
+    mae = torch.abs(predictions - targets).mean().item()
+    
+    return mse, rmse, mae
 
 def plot_and_save_results(conf_matrix, accuracy, classification_rep):
 
@@ -68,3 +102,16 @@ if __name__ == "__main__":
 
     # Plot and save results
     plot_and_save_results(conf_matrix, accuracy, classification_rep)
+
+    ###===================================================================================================================
+    # Regression Model Evaluation
+    ###===================================================================================================================
+
+    model_regression = CollaborativeFilteringRegression(n_users=6040, n_movies=3706)
+    model_regression.load_state_dict(torch.load('models/cf_regression_model.pth'))
+
+    val_loader_regression = prepare_loader_for_regression('ml-1m/val.csv')
+
+    # Evaluate the regression model
+    mse, rmse, mae = evaluate_regression_model(model_regression, val_loader_regression)
+    print(f"Regression Model Evaluation:\n MSE: {mse:.4f}\n RMSE: {rmse:.4f}\n MAE: {mae:.4f}")

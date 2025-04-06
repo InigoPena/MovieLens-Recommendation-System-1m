@@ -6,7 +6,7 @@ import pandas as pd
 import os
 import matplotlib.pyplot as plt
 
-class CollaborativeFilteringModel(nn.Module):
+class CollaborativeFilteringRegression(nn.Module):
     def __init__(self, n_users, n_movies, n_factors=50, hidden_layers=[32,16]):
         super().__init__()
 
@@ -41,16 +41,20 @@ class CollaborativeFilteringModel(nn.Module):
             ])
             input_size = hidden_size
 
-        # Final output layer
-        layers.append(nn.Linear(input_size, 5))
+        # Final output layer with a single neuron for regression
+        layers.append(nn.Linear(input_size, 1))
+        
+        # Optional sigmoid activation to constrain output between 0 and 1
+        # It is scaled back to the 1-5 range later
+        layers.append(nn.Sigmoid())
 
         # Create the sequential model
         self.network = nn.Sequential(*layers)
 
-        print(f"Model initialized with {n_users} users and {n_movies} movies.\n")
+        print(f"Regression model initialized with {n_users} users and {n_movies} movies.\n")
 
+    # Define how data flows through the model
     def forward(self, users, movies):
-        
         user_embed = self.user_embedding(users)
         movie_embed = self.movie_embedding(movies)
         
@@ -60,11 +64,11 @@ class CollaborativeFilteringModel(nn.Module):
         x = self.dropout(x)
         return self.network(x)
 
-# Model Training function
-def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
+# Model Training function for regression
+def train_regression_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     
-    # Loss and Optimizer
-    criterion = nn.CrossEntropyLoss()
+    # Use MSE Loss for regression
+    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train_losses = []
@@ -75,17 +79,23 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     counter = 0
     best_model_state = None
 
-
     # Training Loop
     for epoch in range(epochs):
         model.train()
         total_train_loss = 0
 
-        for batch_users, batch_movies, batch_labels in train_loader:
+        for batch_users, batch_movies, batch_ratings in train_loader:
             optimizer.zero_grad()
 
             outputs = model(batch_users, batch_movies)
-            loss = criterion(outputs, batch_labels)
+            outputs = outputs.squeeze() # Remove extra dimension
+            
+            # Scale ratings from 0-1 to 0-4 range for loss calculation
+            scaled_outputs = outputs * 4
+            batch_ratings = batch_ratings.float()
+            
+            # loss
+            loss = criterion(scaled_outputs, batch_ratings)
 
             loss.backward()
             optimizer.step()
@@ -99,11 +109,13 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
         model.eval()
         total_val_loss = 0
         with torch.no_grad():
-            model.eval()
-            for batch_users, batch_movies, batch_labels in val_loader:
-                outputs = model(batch_users, batch_movies)
-                val_loss = criterion(outputs, batch_labels)
+            for batch_users, batch_movies, batch_ratings in val_loader:
+                outputs = model(batch_users, batch_movies).squeeze()
+                scaled_outputs = outputs * 4
+                batch_ratings = batch_ratings.float()
+                val_loss = criterion(scaled_outputs, batch_ratings)
                 total_val_loss += val_loss.item()
+        
         avg_val_loss = total_val_loss / len(val_loader)
         val_losses.append(avg_val_loss)
         
@@ -112,6 +124,7 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
               f'Train Loss: {avg_train_loss:.4f}, '
               f'Validation Loss: {avg_val_loss:.4f}')
         
+        # Early stopping check
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             best_model_state = model.state_dict()
@@ -130,21 +143,22 @@ def train_model(model, train_loader, val_loader, epochs=7, learning_rate=0.01):
     # Plot and save the loss histogram
     os.makedirs('results', exist_ok=True)
     plt.figure()
-    plt.plot(range(1, epochs + 1), train_losses, label='Training Loss')
-    plt.plot(range(1, epochs + 1), val_losses, label='Validation Loss')
+    plt.plot(range(1, len(train_losses) + 1), train_losses, label='Training Loss')
+    plt.plot(range(1, len(val_losses) + 1), val_losses, label='Validation Loss')
     plt.xlabel('Epochs')
-    plt.ylabel('Loss')
+    plt.ylabel('MSE Loss')
     plt.title('Training and Validation Loss')
     plt.legend()
-    plt.savefig('results/loss_plot.png')
-    print("Loss plot saved to 'results/loss_plot.png'")
-
-def prepare_loader(file_path):
+    plt.savefig('results/regression_loss_plot.png')
+    print("Loss plot saved to 'results/regression_loss_plot.png'")
     
-    # Load the test data
+    return train_losses, val_losses
+
+def prepare_loader_for_regression(file_path, batch_size=64, shuffle=True):
+    # Load the data
     df_for_loader = pd.read_csv(file_path)
 
-    # Convert ratings from 1-5 to 0-4 for PyTorch compatibility
+    # Convert ratings from 1-5 to 0-4 for scaling compatibility
     df_for_loader['Rating'] = df_for_loader['Rating'] - 1
 
     # Convert DataFrame to PyTorch tensor
@@ -155,6 +169,6 @@ def prepare_loader(file_path):
     )
 
     # Create DataLoader
-    loader = DataLoader(tensor, batch_size=64, shuffle=False)
+    loader = DataLoader(tensor, batch_size=batch_size, shuffle=shuffle)
 
     return loader
